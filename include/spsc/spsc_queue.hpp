@@ -103,8 +103,14 @@ namespace spsc {
                 //On most hardware, they'll land on the same 64-byte cache line -> false sharing
                 //between producer and consumer. We LEAVE it this way on purpose for now
                 // so stage can measure the penalty and then fix it with alignment
-                std::atomic<std::size_t> head_{0};      //written by producer, read by consumer
-                std::atomic<std::size_t> tail_{0};      //written by consumer, read by producer
+
+                // INITIAL BEFORE FIX
+               std::atomic<std::size_t> head_{0};      //written by producer, read by consumer
+               std::atomic<std::size_t> tail_{0};      //written by consumer, read by producer
+
+
+              //alignas(64) std::atomic<std::size_t> head_{0};      //this fix forces each index into it's own 64-byte cache line
+              //alignas(64) std::atomic<std::size_t> tail_{0};    
             };
 }           //namespace spsc
 

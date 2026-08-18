@@ -1,15 +1,3 @@
-# cmake_minimum_required(VERSION 3.20)
-# project(lockfree-spsc-queue)
-
-# set(CMAKE_CXX_STANDARD 20)
-# set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-# find_package(Threads REQUIRED)
-
-# add_executable(hello_threads src/hello_threads.cpp)
-# target_link_libraries(hello_threads PRIVATE Threads::Threads)
-
-
 cmake_minimum_required(VERSION 3.16)
 project(spsc_queue LANGUAGES CXX)
 
@@ -47,3 +35,11 @@ target_include_directories(queue_test PRIVATE include)
 # Optimize the test: -O2 makes the compiler MORE aggressive about reordering,
 # which is exactly the pressure that exposes broken memory ordering.
 target_compile_options(queue_test PRIVATE -O2)
+
+# --- Stage 3: throughput benchmark ---
+add_executable(bench_throughput bench/bench_throughput.cpp)
+target_link_libraries(bench_throughput PRIVATE Threads::Threads)
+target_include_directories(bench_throughput PRIVATE include)
+# -O3: maximum optimization. More aggressive reordering = more pressure on the
+# memory model, and faster code that makes the false-sharing penalty more visible.
+target_compile_options(bench_throughput PRIVATE -O3)
