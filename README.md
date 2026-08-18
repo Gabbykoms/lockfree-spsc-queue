@@ -20,3 +20,8 @@ cmake -S . -B build && cmake --build build
  ./build/hello_threads
  ./build/queue_test
 
+#TSAN
+cmake -S . -B build-tsan -DENABLE_TSAN=ON
+cmake --build build-tsan
+./build-tsan/queue_test
+
