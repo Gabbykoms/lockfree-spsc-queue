@@ -25,5 +25,7 @@ int main(){
 
     std::cout << "counter = " << counter.load() << "(expected 2000000) \n";
     std::cout << "toolchain OK \n";
+
+
     return 0;
 }

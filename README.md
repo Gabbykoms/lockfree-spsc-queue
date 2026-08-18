@@ -9,9 +9,14 @@ The cost is that I have to enforce ordering correctly using C++ memory model, in
 ### Build
 
 
-cmake -S .-B build 
+cmake -S . -B build 
 
 cmake --build build
 
 ./build/hello_threads
+
+#
+cmake -S . -B build && cmake --build build 
+ ./build/hello_threads
+ ./build/queue_test
 
