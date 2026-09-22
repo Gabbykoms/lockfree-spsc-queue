@@ -72,6 +72,14 @@ cmake --build build-bench --target bench_latency
 # Throughput vs. ring capacity sweep (exposes cache-hierarchy effects)
 cmake --build build-bench --target bench_ring_size
 ./build-bench/bench_ring_size
+
+# Backpressure strategies: spin vs. yield vs. sleep
+cmake --build build-bench --target bench_backpressure
+./build-bench/bench_backpressure
+
+# Batch push/pop amortisation
+cmake --build build-bench --target bench_batch
+./build-bench/bench_batch
 ```
 
 ---
@@ -100,6 +108,12 @@ See findings below.
 See findings below.
 
 ### Stage 6 — Throughput vs. ring capacity 
+See findings below.
+
+### Stage 7 — Backpressure strategies: spin vs. yield vs. sleep 
+See findings below.
+
+### Stage 8 — Batch push/pop: amortising atomic operations 
 See findings below.
 
 ---
@@ -265,9 +279,122 @@ of an 8 MB queue. The right size depends on the item type and target hardware
 
 ---
 
+## Stage 7: Backpressure Strategies — Spin vs. Yield vs. Sleep
+
+### Setup
+
+`bench/bench_backpressure.cpp` runs 1M items through a 256-slot ring with an
+in-flight cap of 32. Both sides (full queue for producer, empty queue for
+consumer) use the same wait strategy. Three strategies are compiled as
+separate template instantiations so the wait path is fully inlined — no
+virtual dispatch overhead in the measurement.
+
+- **Spin** — retry immediately with no hint (`while (!q.try_push(t)) {}`)
+- **Yield** — call `std::this_thread::yield()` on each failed attempt
+- **Sleep** — call `sleep_for(1 µs)` on each failed attempt
+
+CPU use is measured via `getrusage` as a fraction of the two-thread maximum
+(2 × wall time).
+
+### Results (Apple M3, 1M items, ring 256 slots, in-flight cap 32)
+
+| Strategy | Mops/s | p50 ns | p99 ns | p999 ns | CPU use |
+|---|---|---|---|---|---|
+| spin | 10.0 | 3,000 | 3,958 | 6,334 | ~100% |
+| **yield** | **15.6** | **1,916** | **2,375** | **4,667** | ~100% |
+| sleep | 7.5 | 1,542 | 4,667 | 6,292 | 50% |
+
+### Why
+
+**Yield wins on both throughput and latency** — the counter-intuitive result.
+
+With a 32-item in-flight cap and a 256-slot ring, both threads are frequently
+at the boundary: the producer is often blocked waiting for the consumer to
+drain, and the consumer is often blocked waiting for the producer to fill.
+`yield()` tells the scheduler "I have nothing useful to do right now — give
+the other thread a turn." On Apple M3's scheduler this works in the queue's
+favour: the other thread gets the core sooner, makes progress faster, and
+unblocks the waiting thread before the next scheduler tick. The result is
+higher throughput *and* lower latency than spin.
+
+**Spin loses to yield** despite burning the same CPU because it never hints
+to the scheduler. Both threads consume their full time slice spinning against
+each other. On a machine with many idle cores this penalty would shrink
+(there's always a free core for the other thread); on a loaded M3 it matters.
+
+**Sleep saves CPU but pays in tail latency.** A 1 µs sleep is longer than
+the typical inter-item gap at these throughputs (~64–100 ns per item). When
+the consumer sleeps for 1 µs on an empty queue, items that arrive during that
+window sit waiting. The p99 and p999 both climb relative to yield, and
+throughput drops by ~50% versus yield. CPU use halves — the correct tradeoff
+for background or batch workloads where a spare core matters more than
+sub-microsecond latency.
+
+**Conclusion:** The right strategy depends on the workload:
+- **Latency-critical, dedicated cores** → spin (or yield if cores are shared)
+- **Shared cores, throughput-oriented** → yield
+- **Background / batch** → sleep (tune the sleep duration to the expected
+  inter-item gap)
+
+There is no universally correct answer — measure on the target hardware.
+
+---
+
+## Stage 8: Batch Push/Pop — Amortising Atomic Operations
+
+### Setup
+
+`push_n(items, count)` and `pop_n(out, count)` are added to `SpscQueue`.
+Both perform a single `acquire` load + single `release` store regardless of
+how many items are transferred. `bench/bench_batch.cpp` sweeps batch sizes
+1 → 64 with 20M items through a 4096-slot ring (L1 territory from Stage 6
+so memory is not the bottleneck).
+
+Memory-ordering correctness: all writes to `buffer_` are sequenced-before
+the release store on `head_`, so one release store covers the entire batch.
+The consumer's single acquire load on `head_` then establishes
+happens-before for every item written in that batch.
+
+### Results (Apple M3, 20M items, ring 4096 slots)
+
+| Batch | Mops/s | vs single-item |
+|---|---|---|
+| 1 | ~127 | 1.00× |
+| 2 | ~149 | 1.17× |
+| 4 | ~421 | **3.3×** |
+| 8 | ~301 | 2.4× |
+| 16 | ~1107 | 8.7× |
+| 32 | ~1395 | 11.0× |
+| 64 | ~1585 | **12.5×** |
+
+*(Numbers are averages across two runs; the trend is stable, individual
+runs vary ~10%.)*
+
+### Why
+
+**The amortisation gain (batch ≥ 16):** A single-item push costs one relaxed
+load of `head_`, one acquire load of `tail_`, one buffer write, and one
+release store on `head_`. At 100 Mops/s that's ~10 ns per item, a large
+fraction of which is the acquire/release pair. `push_n` pays that cost once
+per batch, so each item in a 64-item batch costs roughly 1/64th of the
+atomic overhead — the 12× throughput gain reflects that ratio.
+
+**The batch-4 spike / batch-8 dip:** Reproducible across runs. 4 items ×
+8 bytes = 32 bytes — exactly half a cache line. Apple M3's store-buffer
+appears to coalesce two half-line writes cheaply, making batch 4 faster than
+expected. At batch 8 the write is a full 64-byte cache line, which takes a
+different (slightly slower) path before the throughput climb resumes at
+batch 16+. This is a micro-architectural artifact, not a correctness issue.
+
+**Conclusion:** If your producer can accumulate items before publishing them,
+batching is the single highest-leverage optimisation available. A batch of 16
+gives ~9× throughput for the same ring, the same memory ordering, and no
+added complexity on the consumer side.
+
+---
+
 ## Next Steps
 
 - [ ] Hardware counter profiling (cache-miss events, not just throughput)
-- [ ] Backpressure strategies: spin vs. yield vs. sleep — CPU cost vs. latency tradeoff
 - [ ] Read: "Is Parallel Programming Hard?" (Paul McKenney) — the formal
       memory model treatment

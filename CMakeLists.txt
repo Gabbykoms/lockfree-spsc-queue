@@ -55,3 +55,15 @@ add_executable(bench_ring_size bench/bench_ring_size.cpp)
 target_link_libraries(bench_ring_size PRIVATE Threads::Threads)
 target_include_directories(bench_ring_size PRIVATE include)
 target_compile_options(bench_ring_size PRIVATE -O3)
+
+# --- Stage 7: backpressure strategies (spin vs. yield vs. sleep) ---
+add_executable(bench_backpressure bench/bench_backpressure.cpp)
+target_link_libraries(bench_backpressure PRIVATE Threads::Threads)
+target_include_directories(bench_backpressure PRIVATE include)
+target_compile_options(bench_backpressure PRIVATE -O3)
+
+# --- Stage 8: batch push/pop amortisation ---
+add_executable(bench_batch bench/bench_batch.cpp)
+target_link_libraries(bench_batch PRIVATE Threads::Threads)
+target_include_directories(bench_batch PRIVATE include)
+target_compile_options(bench_batch PRIVATE -O3)

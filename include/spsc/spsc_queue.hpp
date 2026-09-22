@@ -55,8 +55,6 @@ namespace spsc {
                 : buffer_(capacity + 1), capacity_(capacity + 1){}
 
 
-            //Non-copyable, non-movable: two threads hold a stable reference to one queue. Copying would
-            //correctness disaster.
             SpscQueue(const SpscQueue&) = delete;
             SpscQueue& operator=(const SpscQueue&) = delete;
 
@@ -89,6 +87,46 @@ namespace spsc {
                 T item = buffer_[tail];
                 tail_.store(increment(tail), std::memory_order_release);
                 return item;
+            }
+
+            // Batch push — write up to `count` items with a single release store.
+            // Returns the number actually written (0 if the queue is full).
+            // One acquire load + one release store covers the entire batch, so
+            // per-item atomic cost falls as count grows.
+            // Called ONLY by the producer thread.
+            std::size_t push_n(const T* items, std::size_t count) {
+                const std::size_t head = head_.load(std::memory_order_relaxed);
+                const std::size_t tail = tail_.load(std::memory_order_acquire);
+
+                // free slots = capacity_ - 1 - used; the -1 preserves the spare slot
+                const std::size_t free = (tail - head - 1 + capacity_) % capacity_;
+                const std::size_t n    = std::min(count, free);
+                if (n == 0) return 0;
+
+                for (std::size_t i = 0; i < n; ++i)
+                    buffer_[(head + i) % capacity_] = items[i];
+
+                // single release store — all item writes are sequenced before this
+                head_.store((head + n) % capacity_, std::memory_order_release);
+                return n;
+            }
+
+            // Batch pop — read up to `count` items with a single release store.
+            // Returns the number actually read (0 if the queue is empty).
+            // Called ONLY by the consumer thread.
+            std::size_t pop_n(T* out, std::size_t count) {
+                const std::size_t tail = tail_.load(std::memory_order_relaxed);
+                const std::size_t head = head_.load(std::memory_order_acquire);
+
+                const std::size_t avail = (head - tail + capacity_) % capacity_;
+                const std::size_t n     = std::min(count, avail);
+                if (n == 0) return 0;
+
+                for (std::size_t i = 0; i < n; ++i)
+                    out[i] = buffer_[(tail + i) % capacity_];
+
+                tail_.store((tail + n) % capacity_, std::memory_order_release);
+                return n;
             }
 
             private:

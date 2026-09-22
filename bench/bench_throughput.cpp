@@ -11,52 +11,55 @@
 // The delta is your war story.
 
 #include "spsc/spsc_queue.hpp"
+#include "bench_utils.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <iomanip>
 #include <iostream>
 #include <thread>
 
-int main() {
-    constexpr std::uint64_t N        = 10'000'000;  // items to transfer
-    constexpr std::size_t   CAPACITY = 4096;         // ring size
-
-    spsc::SpscQueue<std::uint64_t> q(CAPACITY);
-
-    // --- start timing AFTER both threads are created, so thread-spawn cost
-    //     doesn't skew the result ---
+static double one_run(std::uint64_t N, std::size_t capacity) {
+    spsc::SpscQueue<std::uint64_t> q(capacity);
     std::atomic<bool> go{false};
 
     std::thread producer([&]() {
-        while (!go.load(std::memory_order_acquire)) {}  // wait for start gun
-        for (std::uint64_t i = 0; i < N; ++i) {
-            while (!q.try_push(i)) {}  // spin until slot free
-        }
+        while (!go.load(std::memory_order_acquire)) {}
+        for (std::uint64_t i = 0; i < N; ++i)
+            while (!q.try_push(i)) {}
     });
 
     std::thread consumer([&]() {
-        while (!go.load(std::memory_order_acquire)) {}  // wait for start gun
+        while (!go.load(std::memory_order_acquire)) {}
         std::uint64_t received = 0;
         while (received < N) {
             if (q.try_pop()) ++received;
         }
     });
 
-    // fire both threads at once so we're measuring steady-state contention,
-    // not one thread racing ahead of the other
     auto t0 = std::chrono::steady_clock::now();
     go.store(true, std::memory_order_release);
-
     producer.join();
     consumer.join();
     auto t1 = std::chrono::steady_clock::now();
 
-    double elapsed_s = std::chrono::duration<double>(t1 - t0).count();
-    double mops      = static_cast<double>(N) / elapsed_s / 1e6;
+    double elapsed = std::chrono::duration<double>(t1 - t0).count();
+    return static_cast<double>(N) / elapsed / 1e6;
+}
 
-    std::cout << "transferred : " << N << " items\n"
-              << "elapsed     : " << elapsed_s << " s\n"
-              << "throughput  : " << mops << " Mops/s\n";
+int main() {
+    constexpr std::uint64_t  N        = 10'000'000;
+    constexpr std::size_t    CAPACITY = 4096;
 
+    std::cout << "transferred : " << N << " items    ring : " << CAPACITY << "\n"
+              << "(5 runs)\n\n";
+
+    auto s = run_stats([&]{ return one_run(N, CAPACITY); }, 5);
+
+    std::cout << std::fixed << std::setprecision(1)
+              << "  mean   : " << s.mean   << " Mops/s\n"
+              << "  median : " << s.median << " Mops/s\n"
+              << "  stddev : " << s.stddev << " Mops/s\n";
     return 0;
 }

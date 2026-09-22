@@ -11,6 +11,7 @@
 // spills from one cache level to the next.
 
 #include "spsc/spsc_queue.hpp"
+#include "bench_utils.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -58,25 +59,27 @@ int main() {
         16384, 32768, 65536, 131072, 262144, 524288, 1048576
     };
 
-    std::cout << "items per run : " << N << "\n\n";
+    std::cout << "items per run : " << N << "    (3 runs each, median reported)\n\n";
     std::cout << std::setw(12) << "capacity"
               << std::setw(14) << "buffer bytes"
               << std::setw(13) << "Mops/s"
+              << std::setw(10) << "±stddev"
               << "  note\n"
-              << std::string(55, '-') << "\n";
+              << std::string(65, '-') << "\n";
 
     for (std::size_t cap : caps) {
         std::size_t bytes = cap * sizeof(uint64_t);
 
         const char* note = "";
-        if (cap ==   8192) note = "<- L1 boundary (~64 KB)";
+        if (cap ==  32768) note = "<- L1 cliff (~256 KB)";
         if (cap == 524288) note = "<- L2 boundary (~4 MB)";
 
-        double mops = bench_one(cap, N);
+        auto s = run_stats([&]{ return bench_one(cap, N); }, 3);
 
         std::cout << std::setw(12) << cap
                   << std::setw(14) << bytes
-                  << std::setw(13) << std::fixed << std::setprecision(1) << mops
+                  << std::setw(13) << std::fixed << std::setprecision(1) << s.median
+                  << std::setw(10) << std::setprecision(1) << s.stddev
                   << "  " << note << "\n";
     }
 
