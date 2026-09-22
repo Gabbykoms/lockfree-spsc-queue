@@ -43,3 +43,15 @@ target_include_directories(bench_throughput PRIVATE include)
 # -O3: maximum optimization. More aggressive reordering = more pressure on the
 # memory model, and faster code that makes the false-sharing penalty more visible.
 target_compile_options(bench_throughput PRIVATE -O3)
+
+# --- Stage 5: latency distribution benchmark ---
+add_executable(bench_latency bench/bench_latency.cpp)
+target_link_libraries(bench_latency PRIVATE Threads::Threads)
+target_include_directories(bench_latency PRIVATE include)
+target_compile_options(bench_latency PRIVATE -O3)
+
+# --- Stage 6: throughput vs. ring capacity ---
+add_executable(bench_ring_size bench/bench_ring_size.cpp)
+target_link_libraries(bench_ring_size PRIVATE Threads::Threads)
+target_include_directories(bench_ring_size PRIVATE include)
+target_compile_options(bench_ring_size PRIVATE -O3)
